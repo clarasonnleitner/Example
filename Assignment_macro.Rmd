@@ -1,0 +1,136 @@
+---
+title: "Macro_Assignment_2"
+output: html_document
+date: "2022-11-23"
+---
+
+##Aufgabe 3
+F(Kt, Nt) = K^0.5(AtLt)0.5, with δ = 0.1, h = 0.01 and n = 0.
+
+#3.1
+Savings rate of the economy s0 = 0.4 
+Determine steady state capital intensity k∗0, the respective output per efficiency unit of labor y0∗ and the consumption per efficiency unit of labor c0∗ at this steady state.
+```{r}
+n <- 0 
+h <- 0.01 
+delta <- 0.1
+s <- 0.4
+alpha <- 0.5 
+  
+g <- (1+n)*(1+h)-1
+k_star <- (s/(g+delta))^(1/(1-alpha))
+
+y0_star <- (k_star)^(alpha) 
+
+c0_star <- (1-s)*y0_star
+
+```
+
+#3.2
+Suppose that in period 0 the economy is initially in the steady state that you calculated in exercise 3.1. Now consider the policy szenario of an increase in savings rate to s1 = 0.6.
+#3.2a
+Determine the new steady state capital intensity k∗1 and the corresponding output per efficiency unit of labor y1∗ and consumption per efficiency unit of labor c1∗.
+```{r}
+n <- 0 
+h <- 0.01 
+delta <- 0.1
+s2 <- 0.6
+alpha <- 0.5
+
+g <- (1+n)*(1+h)-1
+k1_star <- (s/(g+delta))^(1/(1-alpha))
+y1_star <- (k1_star)^(alpha)
+c1_star <- (1-s)*y1_star
+
+```
+
+#3.2b
+Use the FODE(1+g)kt+1 =sf(kt)+(1−δ)kt to determine kt,yt and ct in each of the 100 years following the increase in the savings rate, so simulate the transition path of the economy to its new steady state capital intensity k∗1 for t = 1, . . . , 100 periods
+```{r}
+
+T0 <- 0
+T1 <- 100
+
+ind <- function(t) {
+  return(t + 1 + abs(T0))
+}
+
+s_new <- 0.6
+k <- k1_star
+k[ind(T0):ind(0)] <- k1_star
+
+for (t in ind(0):ind(T1-1)) {
+  k[t+1] <- (s_new*k[t]^alpha + (1-delta)*k[t])/(1+g)
+}
+
+y <- k^alpha
+c <- 0
+c[ind(T0):ind(0)] <- (1-s)*y[ind(T0):ind(0)]
+c[ind(1):ind(T1)] <- (1-s_new)*y[ind(1):ind(T1)]
+
+transition <- data.frame(year=c(T0:T1), k, y, c)
+
+
+```
+
+
+#3.3 
+(0.5 P.) Consider an alternative policy szenario where the original savings rate s0 is in- stead increased to s2 = 0.5. Repeat the previous steps 2a)-2b), so simulate the transition path of the economy to the alternative new steady state k∗2.
+```{r}
+n_2 <- 0 
+h_2 <- 0.01 
+delta_2 <- 0.1
+s_2 <- 0.5
+alpha_2 <- 0.5
+s_old <- 0.4
+
+g <- (1+n_2)*(1+h_2)-1
+k2_star <- (s_2/(g+delta_2))^(1/(1-alpha_2))
+y2_star <- (k2_star)^(alpha_2)
+c2_star <- (1-s_2)*y2_star
+
+
+T0 <- 0
+T1 <- 100
+
+ind <- function(t) {
+  return(t + 1 + abs(T0))
+}
+
+
+s_new2 <- 0.5
+k2 <- k2_star
+k[ind(T0):ind(0)] <- k2
+
+for (t in ind(0):ind(T1-1)) {
+  k2[t+1] <- (s_new2*k2[t]^alpha + (1-delta)*k2[t])/(1+g)
+}
+
+y <- k2^alpha
+c <- 0
+c[ind(T0):ind(0)] <- (1-s_old)*y[ind(T0):ind(0)]
+c[ind(1):ind(T1)] <- (1-s_new)*y[ind(1):ind(T1)]
+
+transition2 <- data.frame(year=c(T0:T1), k2, y, c)
+
+```
+
+#3.4 Generate a plot of the evolution of capital intensity that displays the transition paths of both possible policy szenarios.4 Generate another plot that displays the re- sulting consumption per efficiency unit labor ct for both policy szenarios.
+
+ 
+```{r}
+# Plot of capital intensity evolution
+
+ myplot <- ggplot(data = transition) + 
+  geom_hline(yintercept = k[ind(T0)], linetype="dashed", size=1) + 
+  geom_hline(yintercept = k[ind(T1)], linetype="dashed", size=1) + 
+  geom_line(aes(x=year, y=k), color="darkblue", size=1) +
+  coord_cartesian(xlim=c(T0, T1), ylim=c(6, 40)) + 
+  scale_x_continuous(breaks=seq(T0, T1, 25), expand=c(0, 0)) +
+  labs(x = "Year t",
+       y = "Capital Intensity") +
+  theme_bw()
+
+print(myplot)
+
+```

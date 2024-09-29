@@ -1,0 +1,1724 @@
+---
+title: "Kommunen_Projekt_2"
+output:
+  pdf_document: default
+  html_document: default
+date: "2023-04-12"
+---
+
+#Installieren
+ 
+```{r}
+install.packages("dbplyr")
+install.packages("dplyr")
+install.packages("topicmodels")
+install.packages("tidytext")
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("tidyr")
+install.packages("tidyverse")
+install.packages("quanteda")
+install.packages("tm")
+install.packages("wordcloud")
+install.packages("SentimentAnalysis")
+install.packages("plyr")
+install.packages("unine")
+install.packages("SnowballC")
+install.packages("stargazer")
+install.packages("SentimentAnalysis")
+install.packages("text")
+install.packages("quantreg")
+install.packages("AER")
+```
+
+#Daten einlesen 
+```{r}
+library("dbplyr")
+library("dplyr")
+library("topicmodels")
+library("tidytext")
+library("ggplot2")
+library("dplyr")
+library("tidyr")
+library("tidyverse")
+library("quanteda")
+library("tm")
+library("wordcloud")
+library("SentimentAnalysis")
+library("plyr")
+library("unine")
+library("SnowballC")
+library("stargazer")
+library("SentimentAnalysis")
+library("text")
+library("quantreg")
+library("AER")
+
+```
+
+#Preclean der Daten (xxx, ... , keine Antwort sowie leere Zellen mit NA füllen)
+
+```{r}
+Kommunen <- read.csv2("/Users/clarasonnleitner/Documents/Lehrstuhl Mikro/Kommunenprojekt/NEU_Nov_11_2022_Datensatz_offene_Fragen_q47_q49.csv", na = "NA")  #neuer Datensatz mit score einlesen
+
+# Ersetzen spezifischer Werte durch "NA" in den Spalte q47, q48, q49
+Werte_ersetzen <- c("Keine", "./.", "??", "-", "Keine Antwort", "xxxxxxxxxxxxxx", "--", "xxxxxxxxxxxx","xxxxxxxxxxxxx" , "??" )
+
+Spalten_ersetzen <- c("q47", "q48", "q49")
+
+for (col in Spalten_ersetzen) {
+  Kommunen[, col][Kommunen[, col] %in% Werte_ersetzen | Kommunen[, col] == ""] <- NA
+  
+}
+
+view(Kommunen)
+
+```
+
+Manche Kommunen schreiben bei Frage 48, sh Frage 47 evtl dann den Text bei 47 in 48 einfügen? AR: Egal
+````{r}
+#Falls in Spalte q48 /q49 / q 47   sh 48, sh 47  geantwortet wurde (Problem: Länge der Wörter)  
+
+#in 48
+#Zellen_ersetzen <- c(151, 590, 613, 669) 
+#Kommunen$q48[Zellen_ersetzen] <- Kommunen$q47[Zellen_ersetzen]
+
+#Zellen_ersetzen_2 <- c(432)
+#Kommunen$q48[Zellen_ersetzen_2] <- Kommunen$q49[Zellen_ersetzen_2]
+
+
+#in 49 
+#Zellen_ersetzen_3 <- c(151) 
+#Kommunen$q49[Zellen_ersetzen_3] <- Kommunen$q47[Zellen_ersetzen_3]
+
+
+#Zellen_ersetzen_4 <- c(226) 
+#Kommunen$q49[Zellen_ersetzen_4] <- Kommunen$q48[Zellen_ersetzen_4] 
+
+
+#Frage: Was machen wenn sh. 47 und mehr geschrieben wird noch das andere hinzufügen? 
+
+```
+
+# Frage 47 (größten Herausforderungen)
+##Häufigkeits Analyse 
+
+```{r}
+
+Kommunen_47 <- Kommunen  %>% select ("q47") 
+
+Tokens_Q47 <- tokens(Kommunen_47$q47) 
+
+Q47_remove <- tokens_remove(tokens(Tokens_Q47, remove_punct = TRUE), stopwords("german"))
+
+Tokens_as_dfm_47 <- dfm(Q47_remove)
+
+Top_wörter_q47 <- topfeatures(Tokens_as_dfm_47) #die 10 häufigsten Wörter mit Häufigkeit
+
+
+
+```
+
+## Wordcloud zu Frage 47 (50 häufigsten Wörter)
+```{r}
+wordcloud(words = Q47_remove, 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+```
+
+
+wie viel Leute schreiben nichts/etwas zu Q47 ??? 
+```{r}
+sum(is.na(Kommunen_47$q47))
+sum(!is.na(Kommunen_47$q47))
+```
+
+## LDA Methode für Frage 47 (Topic, Quanteda, Topic Models) (Bsp https://bookdown.org/Maxine/tidy-text-mining/latent-dirichlet-allocation.html)
+Problem: nicht genügend Wörter... 
+
+```{r}
+
+#Evtl Wortstamm? In allen gängigen Papern so gemacht 
+#Macht keinen Sinn weil Wörter abgeschnitten, evtl doch (nochmal ausprobieren), unnötig fällt eh weg  
+
+
+meine.dfm.trim <- dfm_trim(Tokens_as_dfm_47, min_termfreq = 1 , max_termfreq = 75)  #Häufigkeit des vorkommenden Wort mind. und höchst.
+
+anzahl.themen <- 2. #Anzahl der Themen
+dfm2topicmodels <- convert(meine.dfm.trim, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels, anzahl.themen)
+lda.modell 
+
+Topics_Q47 <- as.data.frame(terms(lda.modell, 10))   #10 verschieden Begrifflichkeiten pro Topic
+
+Zuordnung_Themen_47 <- data.frame(Thema = topics(lda.modell))  #welchem Text wird welches Topic zugeordnet 
+
+view(Zuordnung_Themen_47) 
+view(Topics_Q47)
+```
+
+## LDA Topics Q47 Iteratives löschen von (Füll)Wörtern, Synonyme 
+Oft Wiederholungen von Wörtern sowie Synonyme, deswegen iteratives Vorgehen. 
+
+```{r}
+
+Q47_low <-tolower(Kommunen_47$q47)  #alles kleingeschrieben 
+
+Q47_low <- gsub("mitarbeiter", "personal", Q47_low)  
+
+Q47_low <- gsub("mitarbeiterinnen", "personal", Q47_low) 
+
+Test0 <-gsub("dass"," ",Q47_low)
+Test1 <- gsub("immer", " ", Test0)
+Test2 <- gsub("innen"," ", Test1)
+Test3 <- gsub ("sowie", " ", Test2)
+Test4 <- gsub("mehr", " ", Test3)
+Test5 <- gsub ("etc", " ", Test4) 
+Test6 <- gsub ("verwaltungen", "verwaltung", Test5)
+Test7 <- gsub("personalgewinnung", "fachkräftemangel", Test6) 
+Test8 <- gsub("fachpersonal", "fachkräftemangel", Test7)
+Test9 <- gsub("fachkräftemangel", "personal", Test8) #wenn alles so gleichgesetzt, dann ist die Frequenz teilweise zu niedrig angesetzt...  
+Test10 <- gsub("fachkräftegewinnung", "personal", Test9)
+Test11 <- gsub("finanzielle", "finanzausstattung", Test10)
+Test12 <- gsub ("finanzierung", "finanzausstattung", Test11)
+Test13 <- gsub ("finanzen", "finanzausstattung", Test12) 
+Test14 <-gsub("gut", "", Test13)
+Test15 <- gsub("ausreichende", "", Test14)
+Test16 <- gsub ("z.b", "", Test15)
+Test17 <- gsub("qualifiziertes", "", Test16)
+Test18 <- gsub("finden", "", Test17)
+Test19 <- gsub("bereichen", "bereiche", Test18)
+Test20 <- gsub("kommunalen", "kommune", Test19)
+Test21 <- gsub("mitarbeitergewinnung", "personal", Test20) 
+Test22 <- gsub("gewinnung", "mitarbeitergewinnung", Test21)
+Test23 <- gsub("gew", "", Test22)
+Test24 <- gsub("kommune", "", Test23)   #wird schon sehr kleinlich jetzt 
+Test25 <- gsub("mitarbeiterinnung", "mitarbeiter", Test24)
+Test26 <- gsub(" n", "", Test25)
+Test27 <- gsub("bzw", "", Test26)
+Test28 <- gsub("bereiche", "bereich", Test27)
+
+tokens_47_iteriert <- tokens(Test28, remove_numbers = TRUE, remove_punct = TRUE, remove_symbols = TRUE)
+tokens_remove_47_iteriert <- tokens_remove(tokens_47_iteriert, stopwords("german"))
+
+
+# Iteration angewandt und dann LDA angewandt 
+meine.dfm <- dfm(tokens_remove_47_iteriert)
+
+meine.dfm.trim <- dfm_trim(meine.dfm, min_termfreq = 1 , max_termfreq = 75) 
+
+anzahl.themen <- 2
+dfm2topicmodels <- convert(meine.dfm.trim, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels, anzahl.themen)
+lda.modell 
+
+Topics_47_Iteriert <- as.data.frame(terms(lda.modell, 10))
+
+Zuordnung_Themen_47_Iteriert <- data.frame(Thema = topics(lda.modell)) 
+
+#Tabelle wo die iterierten Topics mit den "alten" Topics verglichen werden: 
+
+Vgl_q47_lDA <- cbind(Topics_47_Iteriert, Topics_Q47) 
+
+(colnames(Vgl_q47_lDA) <- c("Topic 1 iteriert 47", "Topic 2 iteriert 47","Topic 1 ursprünglich 47",  "Topic 2 ursprünglich 47"))
+
+print(Topics_47_Iteriert)
+
+write.csv(Zuordnung_Themen_47_Iteriert, "tabelle.csv", row.names = FALSE)
+
+```
+
+
+#Frage 48 (Rahmenbedinungen)
+
+## Häufigkeits Analyse Frage 48 
+
+```{r}
+
+Subset_48 <- Kommunen  %>% select ("q48")
+
+Subset_Q48 <- tokens(Subset_48$q48) 
+
+Q48_remove <- tokens_remove(tokens(Subset_Q48, remove_punct = TRUE), stopwords("german")) # Stopwords und Punctutaion removed 
+
+Tokens_as_dfm_48 <- dfm(Q48_remove)  #Tokens als DFM wieder 
+
+Top_wörter_q48 <- topfeatures(Tokens_as_dfm_48) #die 10 häufigsten Wörter mit Häufigkeit
+
+
+
+```
+
+## Wordcloud Frage 48 
+```{r}
+wordcloud(words = Q48_remove, 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+```
+
+## LDA Methode für Frage 48 (Topic, Quanteda, Topic Models)
+```{r}
+
+meine.dfm.trim_48 <- dfm_trim(Tokens_as_dfm_48, min_termfreq = 1 , max_termfreq = 75)  
+meine.dfm.trim_48
+
+anzahl.themen <- 2
+dfm2topicmodels_48 <- convert(meine.dfm.trim_48, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels_48, anzahl.themen)
+lda.modell
+
+Topics_Q48 <-as.data.frame(terms(lda.modell, 10))
+
+Zuordnung_Themen_48 <- data.frame(Thema = topics(lda.modell))
+
+
+```
+
+##LDA Topics Q48 Iteratives löschen von (Füll)Wörtern, Synonyme 
+```{r}
+
+Q48_low <- tolower(Kommunen$q48)
+
+Test0_48 <- gsub("mitarbeiter", "personal", Q48_low) 
+Test1_48 <- gsub("mitarbeiterinnen", "personal", Test0_48) 
+Test2_48 <- gsub("vergütung", "bezahlung", Test1_48)
+Test3_48 <-gsub("müssen"," ",Test2_48)
+Test4_48 <- gsub ("z.b.", "", Test3_48)
+Test5_48 <- gsub("ausreichende", "",Test4_48)
+Test6_48 <- gsub ("mehr", "", Test5_48)
+Test7_48 <- gsub ("weniger", " ", Test6_48)
+Test8_48 <- gsub ("bessere", " ", Test7_48)
+Test9_48 <- gsub ("immer", "", Test8_48)
+Test10_48 <- gsub ("dass", "", Test9_48)
+Test11_48 <- gsub ("z.b", "", Test10_48)
+Test12_48 <- gsub("finanzielle", "finanzausstattung", Test11_48) 
+Test13_48 <- gsub("besser", "", Test12_48)
+Test14_48<- gsub("kommunale", "kommunen", Test13_48)  
+Test15_48 <- gsub("kommunalen", "kommunen", Test14_48)
+Test16_48 <- gsub("kommunenn", "kommune", Test15_48) 
+
+
+# LDA mit dem entsprechendem neuem DF 
+meine.tokens_48 <- tokens(Test16_48, remove_numbers = TRUE, remove_punct = TRUE, remove_symbols = TRUE)
+meine.tokens_48 <- tokens_remove(meine.tokens_48, stopwords("german"))
+meine.dfm_48_2 <- dfm(meine.tokens_48)
+
+meine.dfm.trim_48_2 <- dfm_trim(meine.dfm_48_2, min_termfreq = 1, max_termfreq = 75)  
+meine.dfm.trim_48_2 
+
+# Topics 
+anzahl.themen <- 2
+dfm2topicmodels_48_2 <- convert(meine.dfm.trim_48_2, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels_48_2, anzahl.themen)
+lda.modell
+
+Topics_Q48_iteriert <- as.data.frame(terms(lda.modell, 10))
+
+Topics_Q48_iteriert_Zuordnung <- data.frame(Thema = topics(lda.modell)) 
+
+#Tabelle Vergleich iteriterte Topics und Topics davor 
+
+Vgl_q48_lDA <- cbind(Topics_Q48_iteriert, Topics_Q48)
+colnames(Vgl_q48_lDA) <- c("Topic 1 iteriert 48", "Topic 2 iteriert 48","Topic 1 ursprünglich 48",  "Topic 2 ursprünglich 48")
+
+
+```
+
+#Frage 49  (Egovernment)
+
+##Wörter zählen Frage 49 
+```{r}
+
+Subset_49 <- Kommunen %>% select ("q49")
+
+Subset_Q49<- tokens(Subset_49$q49) 
+
+Q49_remove <- tokens_remove(tokens(Subset_Q49, remove_punct = TRUE), stopwords("german")) # Stopwords und Punctutaion removed 
+
+Tokens_as_dfm_49 <- dfm(Q48_remove)   #Tokens als DFM wieder 
+print(Tokens_as_dfm_49)
+
+##Top Wörter 
+Top_wörter_q49 <- topfeatures(Tokens_as_dfm_49) #Häufigsten 10 Wörter mit Häufigkeit
+
+```
+
+## Wordcloud Frage 49 
+```{r}
+wordcloud(words = Q49_remove, 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+```
+
+## LDA Methode Frage 49 
+```{r}
+meine.dfm_49 <- dfm(Tokens_as_dfm_49, tolower = TRUE)
+meine.dfm.trim_49 <- dfm_trim(meine.dfm_49, min_termfreq = 1, max_termfreq = 75)
+
+anzahl.themen <- 2
+dfm2topicmodels_49 <- convert(meine.dfm.trim_49, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels_49, anzahl.themen)
+
+Topics_Q49 <- as.data.frame(terms(lda.modell, 10))
+Topic_Zuordnung_49 <- data.frame(Thema = topics(lda.modell))
+```
+
+## LDA Topics Q49 Iteratives löschen von (Füll)Wörtern, Synonyme 
+```{r}
+Q49_low <- tolower(Kommunen$q49) #Mitarbeiter = Personal ABER jetzt sehr oft und nicht mehr in Topics, weil zu oft vorkommen? .... 100 mal 
+
+Test0_49 <- gsub ("mitarbeiter", "personal", Q49_low) #Mitarbeiter = Personal ABER jetzt sehr oft und nicht mehr in Topics, weil zu oft vorkommen? .... 100 mal 
+Test1_49 <- gsub ("personelle", "personal", Test0_49 )
+Test2_49  <- gsub("fehlende", "mangelnde", Test1_49 ) 
+Test3_49  <- gsub("mitarbeiterinnen", "personal", Test2_49 ) # nach Test_2 
+Test4_49 <-gsub("verwaltungen", "verwaltung",Test3_49 )
+
+Test5_49 <- gsub("dass", "",Test4_49 )
+Test6_49 <- gsub ("müssen", "", Test5_49)
+Test7_49 <- gsub ("viele", "", Test6_49)
+Test8_49 <- gsub ("mangelnde", "", Test7_49)
+Test9_49 <- gsub ("wenig", "", Test8_49)
+Test10_49 <- gsub(" s ", " ", Test9_49) #Problem taucht noch auf in der Endliste 
+Test11_49 <- gsub ("kommunen", "kommune", Test10_49)
+Test12_49 <- gsub ("bzw", "", Test11_49)
+Test13_49 <- gsub("mehr", "", Test12_49)
+Test14_49 <- gsub("bessere", "", Test13_49)
+Test15_49 <- gsub("kleinen", "", Test14_49)
+Test16_49 <- gsub("kommunalen", "", Test15_49)
+
+#LDA 
+meine.tokens_49 <- tokens(Test16_49, remove_numbers = TRUE, remove_punct = TRUE, remove_symbols = TRUE)
+meine.tokens_49 <- tokens_remove(meine.tokens_49, stopwords("german"))
+meine.dfm_49_2 <- dfm(meine.tokens_49)
+
+
+meine.dfm.trim_49_2 <- dfm_trim(meine.dfm_49_2, min_termfreq = 1 , max_termfreq = 75)  
+meine.dfm.trim_49_2 
+
+anzahl.themen <- 2
+dfm2topicmodels_49_2 <- convert(meine.dfm.trim_49_2, to = "topicmodels")
+lda.modell <- LDA(dfm2topicmodels_49_2, anzahl.themen)
+lda.modell
+
+Topics_Q49_iteriert <-as.data.frame(terms(lda.modell, 10))
+
+Topic_Zuordnung_49_iteriert <- data.frame(Thema = topics(lda.modell))
+
+#Tabelle Vergleich iteriterte Topics und Topics davor
+
+Vgl_q49_lDA <- cbind(Topics_Q49_iteriert, Topics_Q49)
+colnames(Vgl_q49_lDA) <- c("Topic 1 iteriert 49", "Topic 2 iteriert 49","Topic 1 ursprünglich 49",  "Topic 2 ursprünglich 49")
+
+
+```
+
+# Sentiment Analysis Dict: Christian Rauh
+Dictionary öffnen, Befehl funktioniert irgendwie nicht, deswegen manuell immer davor einlesen.. 
+
+##Frage 47 (erste jede Frage einzeln, danach gepoolt)
+
+```{r}
+
+
+#sent.dictionary <- load("/Users/clarasonnleitner/Downloads/JITP-Replication-Final/1_Dictionaries/Rauh_SentDictionaryGerman.Rdata")
+
+colnames(sent.dictionary)[1] ="word" #um Sentiment anzuwenden, muss eine Spalte den Namen "Word" haben 
+
+data_dictionary_Rauh <- quanteda::as.dictionary(sent.dictionary) #Dict als solches festlegen 
+
+
+# compound bi-gram negation patterns (weil Dict nur -1 oder 1 hat)  
+toks2 <- tokens_compound(Q47_remove, "/Users/clarasonnleitner/Downloads/JITP-Replication-Final/1_Dictionaries/Rauh_SentDictionaryGerman.Rdata", concatenator = " ")
+
+
+# apply dictionary 
+sentiment_Analysis_Versuch2 <- tokens_lookup(toks2, dictionary = data_dictionary_Rauh) |> 
+  dfm() 
+
+sentiment_Versuch2 <- convert(sentiment_Analysis_Versuch2, to = "data.frame")  
+
+# Wie viele positive / negative Wörter haben die einzelnen Kommunen?
+
+sum(!sentiment_Versuch2$`-1`=="0") 
+sum(!sentiment_Versuch2$`1`=="0")
+
+```
+
+##Frage 47 Zusammenhang zwischen Score und Sentiment ("Dict: Christian Rauh" ) 
+(Frage: Schreiben die Kommunen mit einem höheren/niedrigeren Managementscore mehr positive/negative Wörter?) 
+
+Average Score mit Sentiment Score zusammenrechnen für Frage 47 
+Problem: Wie gewichtet? 
+Bsp: Text 4: zwei Positive und 10 negative 
+1. Versuch: share (positiv / alle)  = was letztendlich auch von AR gefordert wurde
+restlichen Versuche nicht relevant
+
+
+(2. Versuch. nur positiv 
+3. Versuch: nur negativ ´´
+4. Versuch; positiv ohne Ausreiser
+5. Versuch; positiv ohne 0)
+```{r}
+#average Score und Sentiment_Versuch in einer Tabelle
+Tabelle_sent_47 <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_Versuch2$`1`, sentiment_Versuch2$`-1`)
+
+names(Tabelle_sent_47 )[3] <- "positiv"
+names(Tabelle_sent_47 )[4] <- "negativ"
+
+# Zusammenrechnen des Shares (positive Wörter / positive Wörter + negative Wörter)
+
+gewichtet_47 <- Tabelle_sent_47 $positiv / (Tabelle_sent_47 $positiv + Tabelle_sent_47 $negativ)
+
+#Share zur Tabelle hinzugefügt als neue Spalte 
+
+Tabelle_sent_47$gewichtet_47  <- gewichtet_47  
+
+#LM Modell 
+
+share_positiv <- plot(Tabelle_sent_47$gewichtet_47 ,Tabelle_sent_47$`Kommunen$score_avg`)
+
+abline(lm(Tabelle_sent_47$gewichtet_47  ~Tabelle_sent_47 $`Kommunen$score_avg`)) 
+
+summary(lm(Tabelle_sent_47$gewichtet_47  ~Tabelle_sent_47$`Kommunen$score_avg`))
+
+
+#Absolut Positiv abgebildet lm
+
+#Absolut_positiv <- plot(x = Tabelle_sent_47$positiv,y = Tabelle_sent_47 $`Kommunen$score_avg`)
+
+#abline(lm(Tabelle_sent_47 $positiv~ Tabelle_sent_47 $`Kommunen$score_avg`)) 
+
+#summary(lm(Tabelle_sent_47$positiv ~ Tabelle_sent_47 $`Kommunen$score_avg`)) 
+
+#Absolut Negativ abgebildet lm 
+
+#Absolut_negativ <- plot(x = Tabelle_sent_47$negativ,y = Tabelle_sent_47$`Kommunen$score_avg`)
+
+#abline(lm(Tabelle_sent_47 $negativ ~ Tabelle_sent_47$`Kommunen$score_avg`))
+       
+#summary (lm(Tabelle_sent_47 $negativ ~ Tabelle_sent_47$`Kommunen$score_avg`)) # nicht signifikant 
+
+
+#Absolute positive Werte ohne Ausreiser lm 
+
+#ds_ohne_ausreisser <- Tabelle_sent_47 [Tabelle_sent_47$positiv< 7, ]
+
+#summary(lm(ds_ohne_ausreisser$positiv ~ ds_ohne_ausreisser$`Kommunen$score_avg`))
+
+#Absolute Werte ohne Nullwerte lm 
+
+#ds_ohne_pos_ausreisser2 <- Tabelle_sent_47 [Tabelle_sent_47 $positiv > 0, ] 
+
+#summary(lm(ds_ohne_pos_ausreisser2$positiv ~ ds_ohne_pos_ausreisser2$`Kommunen$score_avg`)) 
+
+#Absolute negative Werte ohne Nullwerte lm 
+
+#ds_ohne_neg_ausreisser <- Tabelle_sent_47 [Tabelle_sent_47 $negativ > 0, ]
+#summary(lm(ds_ohne_neg_ausreisser$negativ ~ ds_ohne_neg_ausreisser$`Kommunen$score_avg`))
+
+```
+
+# Sentiment Analysis "Dict: Christian Rauh" Frage 48 
+```{r}
+
+colnames(sent.dictionary)[1] ="word"
+
+data_dictionary_Rauh <- quanteda::as.dictionary(sent.dictionary)
+
+# compound bi-gram negation patterns (dictionary angewandt)
+toks48 <- tokens_compound(Q48_remove, "/Users/clarasonnleitner/Downloads/JITP-Replication-Final/1_Dictionaries/Rauh_SentDictionaryGerman.Rdata", concatenator = " ")
+
+
+# apply dictionary
+sentiment_48 <- tokens_lookup(toks48, dictionary = data_dictionary_Rauh) |>
+  dfm() 
+
+sentiment_48 <- convert(sentiment_48, to = "data.frame") 
+
+```
+
+
+##Frage 48 Zusammenhang zwischen Score und Sentiment Average Score 
+Problem: Wie gewichtet? 
+Bsp: Text 4: zwei Positive und 10 negative 
+1. Versuch: share (positiv / alle) = was letztendlich auch von AR gefordert wurde
+restlichen Versuche nicht relevant
+
+2. Versuch. nur positiv 
+3. Versuch: nur negativ 
+4. Versuch; positiv ohne ausreiser
+5. Versuch; positiv ohne 0 
+
+```{r}
+#average Score und Sentiment_Versuch zusammen
+Tabelle_48 <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_48$`1`, sentiment_48$`-1`)
+
+names(Tabelle_48)[3] <- "positiv"
+names(Tabelle_48)[4] <- "negativ"
+
+# Zusammenrechnen den Scores share (positiv / alle)
+gewichtet_48 <- Tabelle_48$positiv / (Tabelle_48$positiv + Tabelle_48$negativ)
+
+Tabelle_48$gewichtet_48 <- gewichtet_48 
+
+share_positiv_48 <- plot(Tabelle_48$`Kommunen$score_avg`, Tabelle_48$gewichtet_48)
+
+abline(lm(Tabelle_48$gewichtet_48 ~Tabelle_48$`Kommunen$score_avg`)) 
+
+summary(lm(Tabelle_48$gewichtet_48 ~Tabelle_48$`Kommunen$score_avg`))
+
+
+# Absolut Positiv abgebildet lm
+
+#Absolut_positiv_48 <- plot(x = Tabelle_48$`Kommunen$score_avg`,y = Tabelle_48$positiv)
+#abline(lm(Tabelle_48$positiv~ Tabelle_48$`Kommunen$score_avg`)) 
+
+#summary(lm(Tabelle_48$positiv ~ Tabelle_48$`Kommunen$score_avg`))
+
+#Absolut Negativ abgebildet lm
+
+#Absolut_negativ_48 <- plot(x = Tabelle_48$negativ,y = Tabelle_48$`Kommunen$score_avg`)
+#abline(lm(Tabelle_48$negativ ~ Tabelle_48$`Kommunen$score_avg` ))
+       
+#summary (lm(Tabelle_48$negativ ~ Tabelle_48$`Kommunen$score_avg`  )) # nicht signifikant 
+
+
+#Absolute positive Werte ohne Ausreiser lm
+
+#ds_ohne_ausreisser_48 <- Tabelle_48[Tabelle_48$positiv< 10, ]
+
+#summary(lm(ds_ohne_ausreisser_48$positiv ~ds_ohne_ausreisser_48$`Kommunen$score_avg`))
+
+#Absolute Werte ohne Nullwerte lm
+
+#ds_ohne_positiven_ausreisser_48_0 <- Tabelle_48[Tabelle_48$positiv > 0, ] 
+
+#summary(lm(ds_ohne_positiven_ausreisser_48_0$positiv ~ ds_ohne_positiven_ausreisser_48_0$`Kommunen$score_avg` )) 
+
+#Absolute negative Werte ohne Nullwerte (negativen Zusammenhang) lm 
+#ds_ohne_negativen_ausreisser_48 <- Tabelle_48[Tabelle_48$negativ > 0, ]
+
+#summary(lm(ds_ohne_negativen_ausreisser_48$negativ ~ ds_ohne_negativen_ausreisser_48$`Kommunen$score_avg`))
+```
+
+## Sentiment Analysis (Dict: Christian Rauh) Frage 49
+
+```{r}
+
+colnames(sent.dictionary)[1] ="word"
+
+data_dictionary_Rauh <- quanteda::as.dictionary(sent.dictionary)
+
+# compound bi-gram negation patterns (nur -1 und 1 enthalten)
+toks49 <- tokens_compound(Q49_remove, "/Users/clarasonnleitner/Downloads/JITP-Replication-Final/1_Dictionaries/Rauh_SentDictionaryGerman.Rdata", concatenator = " ")
+
+
+# apply dictionary
+sentiment_49 <- tokens_lookup(toks49, dictionary = data_dictionary_Rauh) |>
+  dfm() 
+
+sentiment_49 <- convert(sentiment_49, to = "data.frame") 
+
+```
+
+##Frage 49 Zusammenhang zwischen Score und Sentiment Average Score (Schreiben die Kommunen mit einem höheren Managementscore mehr positive Wörter)
+
+Average Score mit Semntiment Score zusammenrechnen für Frage 48 
+Problem: Wie gewichtet? 
+Bsp: Text 4: zwei Positive und 10 negative 
+1. Versuch: share (positiv / alle) = was letztendlich auch von AR gefordert wurde
+restlichen Versuche nicht relevant
+
+
+2. Versuch. nur positiv 
+3. Versuch: nur negativ 
+4. Versuch; positiv ohne ausreiser
+5. Versuch; positiv ohne 0 
+
+```{r}
+
+#average Score und Sentiment_Versuch zusammen
+Tabelle_49 <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_49$`1`, sentiment_49$`-1`)
+
+names(Tabelle_49)[3] <- "positiv"
+names(Tabelle_49)[4] <- "negativ"
+
+# Zusammenrechnen den Scores share (positiv / alle) lm 
+
+gewichtet_49 <- Tabelle_49$positiv / (Tabelle_49$positiv + Tabelle_49$negativ)
+
+Tabelle_49$gewichtet_49 <- gewichtet_49 
+
+share_positiv_49 <- plot(Tabelle_49$`Kommunen$score_avg`, Tabelle_49$gewichtet_49)
+
+abline(lm(Tabelle_49$gewichtet_49 ~Tabelle_49$`Kommunen$score_avg`)) 
+
+summary(lm(Tabelle_49$gewichtet_49 ~Tabelle_49$`Kommunen$score_avg`))
+
+# # Absolut Positiv abgebildet lm 
+# 
+# #Absolut_positiv_49 <- plot(x = Tabelle_49$positiv,y = Tabelle_49$`Kommunen$score_avg`)
+# #abline(lm(Tabelle_49$positiv ~ Tabelle_49$`Kommunen$score_avg`)) 
+# 
+# #summary(lm(Tabelle_49$positiv ~ Tabelle_49$`Kommunen$score_avg`))
+# 
+# #Absolut Negativ abgebildet lm 
+# 
+# Absolut_negativ_49 <- plot(x = Tabelle_49$negativ,y = Tabelle_49$`Kommunen$score_avg`)
+# abline(lm(Tabelle_49$`Kommunen$score_avg` ~ Tabelle_49$negativ))
+#        
+# summary (lm(Tabelle_49$`Kommunen$score_avg` ~ Tabelle_49$negativ )) 
+# 
+# #Absolute positive Werte ohne Ausreiser lm 
+# 
+# ds_ohne_ausreisser_49 <- Tabelle_49[Tabelle_49$positiv< 10, ]
+# 
+# summary(lm(ds_ohne_ausreisser_49$positiv~ ds_ohne_ausreisser_49$`Kommunen$score_avg`))
+# 
+# #Absolute Werte ohne Nullwerte lm 
+# 
+# ds_ohne_positiven_ausreisser_49_0 <- Tabelle_49[Tabelle_49$positiv > 0, ] 
+# 
+# summary(lm(ds_ohne_positiven_ausreisser_49_0$positiv ~ds_ohne_positiven_ausreisser_49_0$`Kommunen$score_avg`)) 
+# 
+# #Absolute negative Werte ohne Nullwerte (negativen Zusammenhang) lm 
+# 
+# ds_ohne_negativen_ausreisser_49 <- Tabelle_49[Tabelle_49$negativ > 0, ]
+# summary(lm(ds_ohne_negativen_ausreisser_49$negativ ~ds_ohne_negativen_ausreisser_49$`Kommunen$score_avg`))
+
+```
+
+## Sentiment: Pooling von Frage 47,48,49 und dann Koorrelation mit Score bestimmen (Dict: Christian Rauh)
+
+```{r}
+
+#neue Spalte mit allen Antworten von Frage 47, 48, 49 zusammen
+
+Kommunen$pooled <- ifelse(
+  is.na(Kommunen$q47) & is.na(Kommunen$q48) & is.na(Kommunen$q49),
+  "",
+  paste(Kommunen$q47, Kommunen$q48, Kommunen$q49, sep = "")
+)
+
+tokens_rauh <- tokens(sent.dictionary$word)
+pooled <- tokens(Kommunen$pooled) 
+
+# Wandle `versuch` und `pooled` in Vektoren um
+versuch_vec <- as.character(tokens_rauh)
+pooled_vec <- as.character(pooled)
+
+# Bestimme die Schnittmenge der Wörter
+Schnittmenge_rauh_pooled <- intersect(versuch_vec, pooled_vec)  #608 Wörter gemeinsam #hier noch Beispiele welche 
+unique_words <- unique(Schnittmenge_rauh_pooled)        #auch 608 
+
+#Welche positiv ? Welche negativ ? Beispiele ? 
+tokens_schnittmenge_rauh_pooled <- tokens(Schnittmenge_rauh_pooled)
+
+#wie viele Wörter werden allgemein geschrieben 
+#18975 Wörter 
+
+#Sentiment Analysis (Christian Rauh)
+
+pooled_remove <- tokens_remove(tokens(pooled, remove_punct = TRUE), stopwords("german"))
+
+colnames(sent.dictionary)[1] ="word"
+
+data_dictionary_Rauh <- quanteda::as.dictionary(sent.dictionary)
+
+
+# compound bi-gram negation patterns (nur -1 und 1)
+
+toks_pooled <- tokens_compound(pooled_remove, "/Users/clarasonnleitner/Downloads/JITP-Replication-Final/1_Dictionaries/Rauh_SentDictionaryGerman.Rdata", concatenator = " ")
+
+
+# apply dictionary
+sentiment_Analysis_Versuch_pooled <- tokens_lookup(toks_pooled, dictionary = data_dictionary_Rauh) |>
+  dfm() 
+
+sentiment_Versuch_pooled <- convert(sentiment_Analysis_Versuch_pooled, to = "data.frame") 
+
+
+#Alles in einer Tabelle mit Management Score #average Score und Sentiment_Versuch zusammen 
+
+Tabelle_Pooled <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_Versuch_pooled$`1`, sentiment_Versuch_pooled$`-1`)
+
+names(Tabelle_Pooled)[3] <- "positiv"
+names(Tabelle_Pooled)[4] <- "negativ"
+
+
+#welches Wort kommt vor ? Überprüfung  (nur für mich wichtig, keine neuen Ergebnisse)
+
+# Liste der Wörter
+woerter <- c("Fachkräfte", "Leitbilder", "der", "Zusammenarbeit", "Zusammenarbeit", "Haupt", "Ehrenamt",
+             "Wille", "Führungsverantwortung", "übernehmen", "Flexibleres", "Tarifrecht", "Changemanagement", "erforderlich", "Umfassende", "Digitalisierung", "Qualifizierung" ,"der" ,"Beschäftigten" ,"Felexibilität", "NA", "Im" ,"Ergebnis" ,"nur", "der", "eigene", "Wille" ,"es", "umzusetzen"
+)
+
+# Überprüfung, ob Wörter in dict_rauh enthalten sind
+ergebnis <- woerter %in% sent.dictionary$word
+
+# Ausgabe der Ergebnisse
+for (i in 1:length(woerter)) {
+  if (ergebnis[i]) {
+    print(paste0("'", woerter[i], "' ja"))
+  } else {
+    print(paste0("'", woerter[i], "' nein."))
+  }
+}
+
+
+```
+
+
+### Frage: Schreiben die Kommunen mit einem höheren Management Score mehr positive Wörter? lm pooled (positiv / alle) 
+evlt positiv / alle Wörter ; sentiment und Anzahl der Wörter? 
+
+```{r}
+
+#pooled lm Model 
+Tabelle_Pooled$gewichtet_Pooled <- Tabelle_Pooled$positiv / (Tabelle_Pooled$positiv + Tabelle_Pooled$negativ)     #share berechnen 
+summary(lm(Tabelle_Pooled$gewichtet_Pooled ~ Kommunen$score_avg)) 
+
+
+
+#Versuch eines Tobits Models
+
+# Fit the Tobit model
+tobit_model <- tobit(Tabelle_Pooled$gewichtet_Pooled ~ Kommunen$score_avg, left = 0, right = 1, dist = "gaussian")
+
+# Print the summary of the Tobit model
+summary(tobit_model)
+
+
+# Streudiagramm erstellen
+plot(Kommunen$score_avg, Tabelle_Pooled$gewichtet_Pooled, xlab = "Management Score", ylab = "Sentiment", main = "Beziehung zwischen Management Score und Sentiment Share")
+
+
+#wie ist die Verteilung 
+hist(Tabelle_Pooled$gewichtet_Pooled) 
+
+
+
+```
+
+## Schreiben die Kommunen mit einem niedrigeren Management Score mehr negative Wörter? Negativer Score share (pooled): 
+```{r}
+
+gewichtet_Pooled_neg <- Tabelle_Pooled$negativ / (Tabelle_Pooled$negativ + Tabelle_Pooled$positiv)
+
+Tabelle_Pooled$gewichtet_Pooled_neg <- gewichtet_Pooled_neg
+
+plot(Tabelle_Pooled$`Kommunen$score_avg`, Tabelle_Pooled$gewichtet_Pooled_neg)
+
+abline(lm(Tabelle_Pooled$`gewichtet_Pooled_neg`  ~ Tabelle_Pooled$`Kommunen$score_avg` ))
+
+summary(lm(Tabelle_Pooled$`gewichtet_Pooled_neg` ~ Tabelle_Pooled$`Kommunen$score_avg` ))
+
+summary_model <- summary((lm(Tabelle_Pooled$`gewichtet_Pooled_neg` ~ Tabelle_Pooled$`Kommunen$score_avg` ))
+)
+
+
+
+```
+
+##Logit Model für Pooled mit Rauh Dict (laut AR nicht interessant, lm reicht aus) (Logit laut AR nicht nötig)
+
+```{r}
+
+# #Pooled: Festlegen des Schwellenwerts
+# #avg_pooled_sent <- mean(Tabelle_Pooled$gewichtet_Pooled, na.rm = TRUE) 
+# 
+# Tabelle_Pooled$gewichtet_Pooled <- ifelse(Tabelle_Pooled$gewichtet_Pooled > avg_pooled_sent, 1, 0)
+# 
+# # Durchführung der logistischen Regression
+# model <- glm(gewichtet_Pooled~ Kommunen$score_avg, data =Tabelle_Pooled, family = binomial)
+# summary(model)
+# 
+# 
+# # Modellvorhersage
+# score_avg_neu <- 1  # Neuer Wert von Kommunen$score_avg
+# 
+# neue_daten <- data.frame(score_avg = avg_pooled_sent)
+# 
+# # Vorhersage der logistischen Regression
+# log_odds <- predict(model, newdata = neue_daten, type = "link")
+# # Log-Odds berechnen
+# 
+# # Wahrscheinlichkeit des Eintretens von gewichtet_Pooled berechnen, Positiv 
+# wahrscheinlichkeit <- plogis(log_odds)
+# 
+# 
+# #Graphisch darstellen 
+# 
+# 
+# #Entfernen von Zeilen mit fehlenden Werten in der Spalte "score_avg":
+# Tabelle_Pooled <- Tabelle_Pooled[!is.na(Tabelle_Pooled$score_avg), ]
+# 
+# # Werte für score_avg generieren
+# score_values <- seq(min(Tabelle_Pooled$score_avg), max(Tabelle_Pooled$score_avg), length.out = 100)
+# 
+# 
+# # Vorhersage der Wahrscheinlichkeiten
+# wahrscheinlichkeiten <- predict(modell, newdata = data.frame(Kommunen$score_avg = score_values), type = "response")
+# 
+# # Plot der Wahrscheinlichkeiten
+# plot(score_values, wahrscheinlichkeiten, type = "l", xlab = "score_avg", ylab = "Wahrscheinlichkeit")
+
+```
+
+## lm Pooled abgebildet absolut positiv (laut AR nicht wichtig, weil share wichtig)
+```{r}
+
+#Absolut Positiv
+Absolut_positiv_Pooled <- plot(x = Tabelle_Pooled$`Kommunen$score_avg`, y = Tabelle_Pooled$positiv)
+
+abline(lm(Tabelle_Pooled$positiv ~ Tabelle_Pooled$`Kommunen$score_avg`))  
+
+summary(lm(Tabelle_Pooled$positiv ~ Tabelle_Pooled$`Kommunen$score_avg`))  
+
+# Absolut Negativ abgebildet 
+
+Absolut_neg_Pooled <- plot(x = Tabelle_Pooled$`Kommunen$score_avg`,y = Tabelle_Pooled$negativ)
+
+abline(lm(Tabelle_Pooled$negativ ~ Tabelle_Pooled$`Kommunen$score_avg`)) 
+
+summary(lm(Tabelle_Pooled$negativ ~ Tabelle_Pooled$`Kommunen$score_avg`))
+```
+
+#Frage 47, 48, 49 Länge der Wörter in Tabelle hinzufügen, Lineare Regression (Schreiben die Kommunen mit einem besseren Management Score mehr Wörter) 
+
+Regression Management, Länge der Antworten einzeln und gepooled (Vielversprechender Ansatz)
+```{r}
+
+#Frage 47 
+
+Kommunen$Tabelle_Länge_Wörter47 <- lengths(strsplit(ifelse(is.na(Kommunen$q47), "", Kommunen$q47), ' '))
+summary(lm(Kommunen$Tabelle_Länge_Wörter47 ~ Kommunen$score_avg))
+     
+
+#Frage 48 
+Kommunen$Tabelle_Länge_Wörter48 <- lengths(strsplit(ifelse(is.na(Kommunen$q48), "", Kommunen$q48), ' '))
+summary(lm(Kommunen$Tabelle_Länge_Wörter47 ~ Kommunen$score_avg))
+
+#Frage 49 
+Kommunen$Tabelle_Länge_Wörter49 <- lengths(strsplit(ifelse(is.na(Kommunen$q49), "", Kommunen$q49), ' '))
+summary(lm(Kommunen$Tabelle_Länge_Wörter49 ~ Kommunen$score_avg))
+
+
+#Pooled 
+Kommunen$Gesamt_Länge_Wörter <- Kommunen$Tabelle_Länge_Wörter48 + Kommunen$Tabelle_Länge_Wörter49 + Kommunen$Tabelle_Länge_Wörter47
+summary(lm(Kommunen$Gesamt_Länge_Wörter ~ Kommunen$score_avg))
+
+#Histogram sehr linksseitig
+hist(Kommunen$Gesamt_Länge_Wörter, xlab = "Länge der Wörter", ylab = "frequency", main = "Histogram")
+
+hist(Kommunen$score_avg)
+sum(Kommunen$Gesamt_Länge_Wörter == 0)
+
+#Wie viele Wörter insgesamt geschriebn? 
+total_sum <- sum(Kommunen$Gesamt_Länge_Wörter, na.rm = TRUE)
+print(total_sum)
+
+
+#log funktion nicht mgl mit 0 in den df 
+Kommunen$Gesamt_Länge_Wörter <- ifelse(Kommunen$Gesamt_Länge_Wörter == 0, +0.000000000000001, Kommunen$Gesamt_Länge_Wörter) #sonst kein log anwendbar
+Anzahl_der_Wörter_log <- log(Kommunen$Gesamt_Länge_Wörter)
+
+
+#lm Model 
+model_Anzahl <- lm(Gesamt_Länge_Wörter~ score_avg, data = Kommunen  )
+
+summary(model_Anzahl)  
+
+
+# mögliche Lösung log - level Model (signifikanter als davor)
+
+Kommunen$Gesamt_Länge_Wörter <- ifelse(Kommunen$Gesamt_Länge_Wörter == 0, +0.000000000000001, Kommunen$Gesamt_Länge_Wörter) #sonst kein log anwendbar
+Anzahl_der_Wörter_log <- log(Kommunen$Gesamt_Länge_Wörter)
+
+Anzahl_Score_ohne_na <- na.omit(data.frame(Anzahl_der_Wörter_log, Kommunen$score_avg))
+
+model_log_Anzahl <- lm(Anzahl_der_Wörter_log ~ score_avg, data = Kommunen )
+
+summary(model_log_Anzahl)  
+
+```
+
+#Andere Möglichkeit, um den Score zu interpretieren (Referenzkategorie laut Roider erstmal nicht nötig, lm Aussagekräftig, dann weitermache)
+Kategorien von 0,1,2,3, (0 = sehr schlechter Managment Score (Referenz), 1 = eher schlechter Managment Score, 2 = eher guter Managment Score , 3 = guter Managment Score 
+Dummys einführen, und dann log - level  
+Quantile 
+````{r}
+
+# Berechnung der 20% Quantile
+quantiles <- quantile(Kommunen$score_avg, probs = c(0.2, 0.4, 0.6, 0.8), na.rm =TRUE)
+
+qs <- 1:5/5
+qr2 <- rq(Anzahl_der_Wörter_log ~ score_avg, data = Kommunen, tau = qs) #Interpretation: ein positiver Koeffizient darauf hin, dass mit zunehmendem Wert von "score_avg" auch der erwartete Wert von "Anzahl_der_Wörter_log" ansteigt 
+
+summary(qr2)
+
+
+#Dummy Variabeln eine Regression, um zu gucken ob Kommunen mit einem höheren Score mehr Wörter schreiben 
+Kommunen$schlecht <- 0
+Kommunen$eher_schlecht_Score <- ifelse(Kommunen$score_avg > quantiles[1] & Kommunen$score_avg <= quantiles[2], 1, 0)
+Kommunen$eher_gut_Score <- ifelse(Kommunen$score_avg > quantiles[2] & Kommunen$score_avg <= quantiles[3], 1, 0)
+Kommunen$gut_Score <- ifelse(Kommunen$score_avg > quantiles[3], 1, 0)
+
+head(Kommunen$gut_Score)
+model_log_kategorien <- lm(Anzahl_der_Wörter_log ~ eher_schlecht_Score + eher_gut_Score + gut_Score, data = Kommunen)
+
+summary(model_log_kategorien)
+
+
+#durchschnittliche Wörteranzahl für verschiedenen Quantile 
+
+quantiles <- c(0.2, 0.4, 0.6, 0.8)  # Liste der gewünschten Quantile
+
+# Schleife über die Quantile
+for (q in quantiles) {
+  # Filtern der Daten basierend auf dem Quantil
+  subset_data <- Kommunen[Kommunen$Gesamt_Länge_Wörter <= quantile(Kommunen$Gesamt_Länge_Wörter, q, na.rm = TRUE), ]
+  
+  # Berechnung des Durchschnitts der Spalte Kommunen$score_avg
+  mean_score <- mean(subset_data$Gesamt_Länge_Wörter, na.rm = TRUE)
+  
+  # Ausgabe des Ergebnisses
+  print(paste("Quantile:", q, "Anzahl_Wörter", mean_score)) 
+}
+
+#Durschnittliche Anzahl der geschriebenen Wörter 
+mean(Kommunen$Gesamt_Länge_Wörter) #Durchschnittlich werden  27.7 Wörter geschrieben
+
+```
+
+##Wordcloud Fragen einzeln obere / untere Hälfte sowie oberes / unteres Drittel für Frage 47
+```{r}
+
+# Topwords für Einträge mit Werten in Spalte Q47, wo der Score höher oder gleich  average ist
+
+avg <- mean(Kommunen$score_avg,na.rm = TRUE) #average berechnen 
+
+average_größere_hälfte <- Kommunen$q47[Kommunen$score_avg >= avg] #Kommunen auswählen, die einen höheren Score als den avg oder avg haben 
+
+Subset_average <- tokens(average_größere_hälfte) 
+ 
+Subset_average_remove <- tokens_remove(tokens(Subset_average, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average <- dfm(Subset_average_remove)
+
+Top_wörter_obere_Hälfte_Score <- topfeatures(Tokens_as_dfm_average, n = 50) #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_obere <- names(Top_wörter_obere_Hälfte_Score) #Liste der häufigsten Wörter 
+
+
+wordcloud(words = Subset_average_remove,           #wordclouds für die obere Hälfte mit eine Score über average 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+
+
+
+# Topwords für Einträge mit Werten in Spalte Q47, wo der Score kleiner avg ist
+
+average_untere_hälfte <- Kommunen$q47[Kommunen$score_avg < avg]
+
+Subset_average_untere <- tokens(average_untere_hälfte ) 
+
+Subset_average_untere_remove <- tokens_remove(tokens(Subset_average_untere, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_untere <- dfm(Subset_average_untere_remove)
+
+Top_wörter_untere_Hälfte_Score <- topfeatures(Tokens_as_dfm_average_untere, n = 50 )  #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_untere <- names(Top_wörter_untere_Hälfte_Score) #Liste der häufigsten Wörtern 
+
+
+#Wordcloud untere Hälfte 
+
+wordcloud(words = Subset_average_untere_remove, 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+
+
+
+#Unterschiede und Gemeinsamkeiten in den häufigsten Wörtern der oberen und unteren Hälfte 
+common_words_avg <- intersect(top_words_obere, top_words_untere)
+unique_words_obere <- setdiff(top_words_obere, top_words_untere)
+unique_words_untere <- setdiff(top_words_untere, top_words_obere)
+
+max_len <- max(length(common_words_avg), length(unique_words_obere), length(unique_words_untere))
+
+# NA nutzen wo nötig avg
+common_words_avg <- c(common_words_avg, rep(NA, max_len - length(common_words_avg)))
+unique_words_obere <- c(unique_words_obere, rep(NA, max_len - length(unique_words_obere)))
+unique_words_untere <- c(unique_words_untere, rep(NA, max_len - length(unique_words_untere)))
+
+# Übersicht über gemeinsame Wörter/ Wörter nur in der oberen Hälfte / Wörter nur in der unteren Hälfte 
+
+Tabelle_Überblick_avg_47 <- data.frame(Common_Words_47 = common_words_avg, Unique_Words_Obere_47 = unique_words_obere, Unique_Words_Untere_47 = unique_words_untere)
+
+
+#Topwords für Einträge mit Werten in Spalte Q47, wo der Score oberes Drittel ist 
+
+oberes_Drittel <- quantile(Kommunen$score_avg, probs = 0.67, na.rm = TRUE)
+
+# Auswahl der Werte, die größer oder gleich dem 67. Perzentil sind
+Werte_oberes_Drittel <- Kommunen$q47[Kommunen$score_avg >= oberes_Drittel] 
+
+Subset_average_obere_drittel <- tokens(Werte_oberes_Drittel)  
+
+Subset_average_obere_drittel_remove <- tokens_remove(tokens(Subset_average_obere_drittel, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_oberes_drittel <- dfm(Subset_average_obere_drittel_remove)
+
+Top_wörter_oberes_Drittel <- topfeatures(Tokens_as_dfm_average_oberes_drittel, n = 50)  #Liste mit Anzahl der häufigsten Wörtern
+
+
+top_words_oberes_drittel <- names(Top_wörter_oberes_Drittel) #Liste der häufigsten Wörtern 
+
+#wordcloud oberes Drittel 
+
+wordcloud(words = Subset_average_obere_drittel_remove,
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2")) 
+
+
+#Topwords für Einträge mit Werten in Spalte Q47, wo der Score unteres Drittel ist 
+
+unteres_Drittel <- quantile(Kommunen$score_avg, probs = 0.33, na.rm = TRUE)
+
+# Auswahl der Werte, die kleiner oder gleich dem 33 Perzentil sind
+Werte_unteres_Drittel <- Kommunen$q47[Kommunen$score_avg <= unteres_Drittel]
+Subset_average_unteres_drittel <- tokens(Werte_unteres_Drittel) 
+
+Subset_average_unteres_drittel_remove <- tokens_remove(tokens(Subset_average_unteres_drittel, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_unteres_drittel <- dfm(Subset_average_unteres_drittel_remove)
+
+Top_wörter_unteres_Drittel <- topfeatures(Tokens_as_dfm_average_unteres_drittel, n = 50)  #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_unteres_drittel <- names(Top_wörter_unteres_Drittel)  #Liste der häufigsten Wörtern 
+
+
+dfm_subset <- dfm(Subset_average_unteres_drittel_remove)
+
+df_untere_drittel <- convert(Tokens_as_dfm_average_unteres_drittel, to = "data.frame")
+
+#wordcloud unteres Drittel 
+
+wordcloud(words = Subset_average_unteres_drittel_remove,              
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2")) 
+
+#Unterschiede und Gemeinsamkeiten in den häufigsten Wörtern oberes / unteres Drittel
+
+common_words_drittel <- intersect(top_words_oberes_drittel, top_words_unteres_drittel)
+unique_words_obere_drittel <- setdiff(top_words_oberes_drittel, top_words_unteres_drittel)
+unique_words_untere_drittel <- setdiff(top_words_unteres_drittel, top_words_oberes_drittel)
+
+max_len <- max(length(common_words_drittel), length(unique_words_obere_drittel), length(unique_words_untere_drittel))
+
+# NA nutzen wo nötig avg
+common_words_drittel <- c(common_words_drittel, rep(NA, max_len - length(common_words_drittel)))
+unique_words_obere_drittel <- c(unique_words_obere_drittel, rep(NA, max_len - length(unique_words_obere_drittel)))
+unique_words_untere_drittel <- c(unique_words_untere_drittel, rep(NA, max_len - length(unique_words_untere_drittel)))
+
+
+# Übersicht über gemeinsame Wörter/ Wörter nur in dem unteren Drittel / Wörter nur im oberen Drittel Frage 47 
+Tabelle_Überblick_drittel <- data.frame(Common_Words = common_words_drittel, Unique_Words_Obere_drittel = unique_words_obere_drittel, Unique_Words_Untere_drittel = unique_words_untere_drittel)
+
+
+
+
+#andere Werte 
+Test_90_Percentile <- quantile(Kommunen$score_avg, probs = 0.95, na.rm = TRUE)  #90 Percentile 
+max(Kommunen$score_avg, na.rm = TRUE)                                   #höchster Management Score
+  
+min(Kommunen$score_avg, na.rm = TRUE)                                  #niedrigster Management Score
+
+
+```
+
+
+##Wordcloud Fragen einzeln obere / untere Hälfte sowie oberes / unteres Drittel für Frage 48 (Sinn: auch den bearbeiteten DF nehmen? )
+```{r}
+
+# Topwords für Einträge mit Werten in Spalte Q48, wo der Score höher oder gleich average ist
+
+average_größere_hälfte_48 <- Kommunen$q48[Kommunen$score_avg >= avg] #Kommunen auswählen, die einen höhen Score als den avg oder avg haben
+
+Subset_average_48 <- tokens(average_größere_hälfte_48) 
+
+Subset_average_remove_48 <- tokens_remove(tokens(Subset_average_48, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_48 <- dfm(Subset_average_remove_48)
+
+Top_wörter_obere_Hälfte_Score_48 <- topfeatures(Tokens_as_dfm_average_48, n = 50) #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_obere_48 <- names(Top_wörter_obere_Hälfte_Score_48) #Liste der häufigsten Wörtern 
+
+#Wordclouds obere Hälfte Management Score für Frage 48 
+
+wordcloud(words = Subset_average_remove_48,      
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+
+
+#Topwords für Einträge mit Werten in Spalte Q48, wo der Score kleiner average ist
+
+average_untere_hälfte_48 <- Kommunen$q48[Kommunen$score_avg < avg] #Kommunen auswählen, die einen kleineren Score als avg haben
+
+Subset_average_untere_48 <- tokens(average_untere_hälfte_48) 
+
+Subset_average_untere_remove_48 <- tokens_remove(tokens(Subset_average_untere_48, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_untere_48 <- dfm(Subset_average_untere_remove_48)
+
+Top_wörter_untere_Hälfte_Score_48 <- topfeatures(Tokens_as_dfm_average_untere_48, n = 50 )  #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_untere_48 <- names(Top_wörter_untere_Hälfte_Score_48) #liste der häufigsten Wörtern 
+
+
+
+#Wordcloud obere Hälfte des Management Score für Frage 48 
+
+wordcloud(words = Subset_average_untere_remove_48, 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2"))
+
+
+
+#Unterschiede und Gemeinsamkeiten häufigsten Wörtern obere / untere Hälfte 
+
+common_words_avg_48 <- intersect(top_words_obere_48, top_words_untere_48)
+unique_words_obere_48 <- setdiff(top_words_obere_48, top_words_untere_48)
+unique_words_untere_48 <- setdiff(top_words_untere_48, top_words_obere_48)
+
+max_len_48 <- max(length(common_words_avg_48), length(unique_words_obere_48), length(unique_words_untere_48))
+
+# NA nutzen wo nötig avg
+common_words_avg_48 <- c(common_words_avg_48, rep(NA, max_len_48 - length(common_words_avg_48)))
+unique_words_obere_48 <- c(unique_words_obere_48, rep(NA, max_len_48 - length(unique_words_obere_48)))
+unique_words_untere_48 <- c(unique_words_untere_48, rep(NA, max_len_48 - length(unique_words_untere_48)))
+
+# Übersicht über gemeinsame Wörter/ Wörter nur in der oberen Hälfte / Wörter nur in der unteren Hälfte Frage 48 
+Tabelle_Überblick_avg_48 <- data.frame(Common_Words_48 = common_words_avg_48, Unique_Words_Obere_48 = unique_words_obere_48, Unique_Words_Untere = unique_words_untere_48)
+
+
+
+
+# Auswahl der Werte, die größer oder gleich dem 67. Perzentil sind Frage 48 
+Werte_oberes_Drittel_48 <- Kommunen$q48[Kommunen$score_avg >= oberes_Drittel] 
+
+Subset_average_obere_drittel_48 <- tokens(Werte_oberes_Drittel_48) 
+
+Subset_average_obere_drittel_remove_48 <- tokens_remove(tokens(Subset_average_obere_drittel_48, remove_punct = TRUE), stopwords("german"))
+
+Tokens_as_dfm_average_oberes_drittel_48 <- dfm(Subset_average_obere_drittel_remove_48)
+
+Top_wörter_oberes_Drittel_48 <- topfeatures(Tokens_as_dfm_average_oberes_drittel_48, n = 50) 
+
+top_words_oberes_drittel_48 <- names(Top_wörter_oberes_Drittel_48)
+
+ #wordcloud oberes Drittel für Frage 48 
+
+wordcloud(words = Subset_average_obere_drittel_remove_48,
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2")) 
+
+
+#Auswahl der Werte, die größer oder gleich dem 33. Perzentil sind Frage 48 
+unteres_Drittel <- quantile(Kommunen$score_avg, probs = 0.33, na.rm = TRUE)
+
+# Auswahl der Werte, die kleiner oder gleich dem 33 Perzentil sind
+Werte_unteres_Drittel_48 <- Kommunen$q48[Kommunen$score_avg <= unteres_Drittel]
+
+
+Subset_average_unteres_drittel_48 <- tokens(Werte_unteres_Drittel_48) 
+
+Subset_average_unteres_drittel_remove_48 <- tokens_remove(tokens(Subset_average_unteres_drittel_48, remove_punct = TRUE), stopwords("german")) #DF reinigen 
+
+Tokens_as_dfm_average_unteres_drittel_48 <- dfm(Subset_average_unteres_drittel_remove_48)
+
+Top_lower_thirds_48 <- topfeatures(Tokens_as_dfm_average_unteres_drittel_48, n = 50) #Liste mit Anzahl der häufigsten Wörtern
+
+top_words_unteres_drittel_48 <- names(Top_lower_thirds_48)  #Liste der häufigsten Wörtern 
+
+
+#dfm_Subset_48<- dfm(Subset_average_unteres_drittel_remove_48)
+#df_untere_drittel_48 <- convert(Tokens_as_dfm_average_unteres_drittel_48, to = "data.frame")
+
+wordcloud(words = Subset_average_unteres_drittel_remove_48,              #wordcloud unteres Drittel 
+          max.words = 50, 
+          scale = c(2,.5), 
+          colors=brewer.pal(6, "Dark2")) 
+
+
+#Unterschiede und Gemeinsamkeiten oberes unteres Drittel Frage 48 
+common_third_48 <- intersect(top_words_oberes_drittel_48, top_words_unteres_drittel_48)
+upper_third_48 <- setdiff(top_words_oberes_drittel_48, top_words_unteres_drittel_48)
+lower_third_48 <- setdiff(top_words_unteres_drittel_48, top_words_oberes_drittel_48)
+
+# NA nutzen wo nötig 
+common_third_48 <- c(common_third_48, rep(NA, 50 - length(common_third_48)))
+upper_third_48 <- c(upper_third_48, rep(NA, 50 - length(upper_third_48)))
+lower_third_48 <- c(lower_third_48, rep(NA, 50 - length(lower_third_48)))
+
+#  Übersicht über gemeinsame Wörter/ Wörter nur in dem unteren Drittel / Wörter nur im oberen Drittel Frage 48 
+Tabelle_Überblick_Drittel_48 <- data.frame(Common_Words_48 = common_third_48, upper_third_48 = upper_third_48, lower_third_48 = lower_third_48)
+
+
+#andere Werte 
+Test_90_Percentile <- quantile(Kommunen$score_avg, probs = 0.95, na.rm = TRUE)  #90 Percentile 
+
+max(Kommunen$score_avg, na.rm = TRUE)                                   #höchster Management Score
+  
+min(Kommunen$score_avg, na.rm = TRUE)
+
+```
+
+#Sentiment Analysis zweites Wörterbuch ausprobiert Leipzig (https://www.wortschatz.uni-leipzig.de/de/download), SentiWS 
+##Dictionary aufbereiten 
+```{r}
+
+#Dictionary einlesen "positive Wörter" 
+path_to_file_2_pos <- "/Users/clarasonnleitner/Downloads/SentiWS_v2/SentiWS_v2.0_Positive.txt"
+
+# Daten aus der Textdatei in einen Datenrahmen laden
+data_SentiWS_pos <- read.table(file = path_to_file_2_pos, header = TRUE, sep = "\t")
+
+data_SentiWS_pos <- data_SentiWS_pos [, 1]  #nur das Wort behalten und nicht die Range des Sentiment Score  
+data_SentiWS_pos <- gsub("\\|[A-Z]+", "", data_SentiWS_pos) #Remove part of speech tagger 
+
+
+dict_2_pos_df <- data.frame(text = data_SentiWS_pos ,stringsAsFactors = FALSE)
+
+
+dict_2_pos_df <- dict_2_pos_df %>%  #Spalte mit 1 hinzufügen für positive Wörter 
+mutate(score = 1, word = text) %>% 
+select(word, score)
+
+
+#Dictionary einlesen "negative Wörter" 
+
+file_path_negativ_2 <- "/Users/clarasonnleitner/Downloads/SentiWS_v2/SentiWS_v2.0_Negative.txt"
+
+# Daten aus der Textdatei in einen Datenrahmen laden
+
+data_SentiWS_neg <- read.table(file = file_path_negativ_2, header = TRUE, sep = "\t")
+
+data_SentiWS_neg <- data_SentiWS_neg[, 1] #nur das Wort behalten und nicht die range des Sentiment Scores 
+
+data_SentiWS_neg <- gsub("\\|[A-Z]+", "", data_SentiWS_neg) #remove part of speech tagger 
+
+dict_2_neg_df <- data.frame(text = data_SentiWS_neg ,stringsAsFactors = FALSE)
+
+
+dict_2_neg_df <- dict_2_neg_df %>%   #Spalte mit -1 hinzufügen für negative Wörter 
+mutate(score = -1, word = text) %>% 
+select(word, score)
+
+#alles in ein Dictionary dict_Senti_Ws packen und Spaltennnamen ändern 
+
+dict_Senti <- rbind(dict_2_neg_df, dict_2_pos_df) 
+
+colnames(dict_Senti)[2] <- "sentiment"
+
+dict_Senti_WS <- quanteda::as.dictionary(dict_Senti) 
+
+
+#Wie viele Wörter aus diesem Dict. kommen in den Kommunen vor ?
+
+tokens_leipzig <-dict_Senti$word
+tokens_leipzig <- tokens(tokens_leipzig)
+pooled <- tokens(Kommunen$pooled) 
+
+# Wandle `versuch` und `pooled` in Vektoren um
+leipzig_vec <- as.character(tokens_leipzig)
+pooled_vec <- as.character(pooled)
+
+# Bestimme die Schnittmenge der Wörter
+Schnittmenge_Leipzig_pooled <- intersect(leipzig_vec, pooled_vec)
+
+
+```
+
+
+##Zusammenhang zwischen diesem Dict (SentiWS) und Average Score (nur pooled) Frage: Schreiben die Kommunen mit einem höheren Management Score mehr positive Wörter?  (geht nicht)
+```{r}
+
+# compound bi-gram negation patterns für pooled (jetzt wieder nur -1, 1)
+toks_pooled <- tokens_compound(pooled_remove,dict_Senti, concatenator = " ")
+
+
+# apply dictionary 
+sentiment_Analysis_Versuch_pooled_Senti_WS <- tokens_lookup(toks_pooled, dictionary = dict_Senti_WS) |>
+  dfm() 
+
+senti_pooled_Senti_WS <- convert(sentiment_Analysis_Versuch_pooled_Senti_WS, to = "data.frame") 
+
+
+#Alles in einer Tabelle mit Management Score #average Score und Sentiment_Versuch zusammen 
+
+senti_pooled_Senti_WS <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, senti_pooled_Senti_WS$`1`, senti_pooled_Senti_WS$`-1`, na.rm = TRUE)
+
+names(senti_pooled_Senti_WS)[3] <- "positiv"
+names(senti_pooled_Senti_WS)[4] <- "negativ"
+
+#Regression mit share (positiv / alle) und der Frage: Schreiben die Kommunen mit einem höheren Management Score mehr positive Wörter ? 
+
+gewichtet_Pooled_Senti_WS <- senti_pooled_Senti_WS$positiv / (senti_pooled_Senti_WS$positiv + senti_pooled_Senti_WS$negativ) 
+
+senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS <- gewichtet_Pooled_Senti_WS
+
+share_positiv_Pooled_Senti_WS <- plot(senti_pooled_Senti_WS$`Kommunen$score_avg`, senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS)
+
+abline(lm(senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS~senti_pooled_Senti_WS$`Kommunen$score_avg`))
+
+summary(lm(gewichtet_Pooled_Senti_WS~Kommunen$'score_avg' ,data = senti_pooled_Senti_WS)) 
+
+plot(Kommunen$score_avg, gewichtet_Pooled_Senti_WS, xlab = "Management Score", ylab = "Sentiment", main = "Beziehung zwischen Management Score und Sentiment Share")
+
+```
+
+
+
+##Logit Model für Pooled mit SentiWS Dict (laut AR nicht nötig)
+
+```{r}
+
+#Pooled: Festlegen des Schwellenwerts
+avg_pooled_SentWS <- mean(senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS, na.rm = TRUE) #0.84
+
+senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS <- ifelse(senti_pooled_Senti_WS$gewichtet_Pooled_Senti_WS > 0.65, 1, 0)
+
+# Durchführung der logistischen Regression
+model <- glm(gewichtet_Pooled_Senti_WS~ Kommunen$score_avg, data =Tabelle_Pooled, family = binomial)
+
+summary(model)
+
+
+```
+
+#Sentiment Versuch mit Dictionary GermanPolarityClues Frage: Schreiben die Kommunen mit einem höheren Management Score mehr positive Wörter?  
+```{r}
+
+#positives Wörterbuch einlesen, 1 Spalte hinzufügen und text in word umbenennen 
+file_path_positiv_3 <- read.delim("/Users/clarasonnleitner/Downloads/GermanPolarityClues-2012/GermanPolarityClues-Positive-Lemma-21042012.tsv", header = TRUE, sep = "\t")
+
+file_path_positiv_3 <- file_path_positiv_3[, 1]
+
+dict_3_pos_df <- data.frame(text = file_path_positiv_3,stringsAsFactors = FALSE)
+
+dict_3_pos_df <- dict_3_pos_df %>% 
+mutate(score = 1, word = text) %>% 
+select(word, score)
+
+
+# negatives Wörterbuch einlesen, -1 Spalte hinzufügen und text in word umbenennen 
+file_path_negativ_3 <- read.delim("/Users/clarasonnleitner/Downloads/GermanPolarityClues-2012/GermanPolarityClues-Negative-21042012.tsv", header = TRUE, sep = "\t")
+
+file_path_negativ_3 <- file_path_negativ_3[, 1]
+
+dict_3_neg_df <- data.frame(text = file_path_negativ_3,stringsAsFactors = FALSE)
+
+dict_3_neg_df <- dict_3_neg_df %>% 
+mutate(score = -1, word = text) %>% 
+select(word, score)
+
+#ein Dictionary daraus machen 
+
+dict_GermanPolarityClues_1  <- rbind(dict_3_neg_df, dict_3_pos_df)
+
+colnames(dict_GermanPolarityClues_1)[2] <- "sentiment"
+
+dict_GermanPolarityClues <- quanteda::as.dictionary(dict_GermanPolarityClues_1) 
+
+#Wie viele Wörter aus diesem Dict kommen in den Kommunen vor ?
+
+tokens_german <- dict_GermanPolarityClues_1$word
+pooled <- tokens(Kommunen$pooled) 
+
+# Wandle versuch und pooled in Vektoren um
+german_vec <- as.character(tokens_german)
+pooled_vec <- as.character(pooled)
+
+# Bestimme die Schnittmenge der Wörter
+Schnittmenge_German_pooled <- intersect(german_vec, pooled_vec)
+
+```
+
+
+## Zusammenhang zwischen diesem Dict und Average Score (pooled) Frage: 
+```{r}
+
+toks_pooled <- tokens_compound(pooled_remove, dict_GermanPolarityClues, concatenator = " ")
+
+sentiment_Analysis_Versuch_pooled_GermanPolarityClues <- tokens_lookup(toks_pooled, dictionary = dict_GermanPolarityClues) |>
+  dfm() 
+
+sentiment_Versuch_pooled_GermanPolarityClues <- convert(sentiment_Analysis_Versuch_pooled_GermanPolarityClues, to = "data.frame") 
+
+
+#Alles in einer Tabelle mit Management Score #average Score und Sentiment_Versuch zusammen 
+
+Pooled_GermanPolarityClues<- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_Versuch_pooled_GermanPolarityClues$`1`, sentiment_Versuch_pooled_GermanPolarityClues$`-1`, na.rm = TRUE)
+
+names(Pooled_GermanPolarityClues)[3] <- "positiv"
+names(Pooled_GermanPolarityClues)[4] <- "negativ"
+
+#Regression 
+
+gewichtet_Pooled_german_pos_neg <- Pooled_GermanPolarityClues$positiv / (Pooled_GermanPolarityClues$positiv + Pooled_GermanPolarityClues$negativ)
+
+
+Pooled_GermanPolarityClues$gewichtet_Pooled_german_pos_neg <- gewichtet_Pooled_german_pos_neg
+
+share_positiv_Pooled_GermanPolarityClues<- plot(Pooled_GermanPolarityClues$`Kommunen$score_avg`, Pooled_GermanPolarityClues$gewichtet_Pooled_GermanPolarityClue)
+
+abline(lm(gewichtet_Pooled_german_pos_neg ~ Kommunen$score_avg, data = Pooled_GermanPolarityClues))
+
+summary(lm(gewichtet_Pooled_german_pos_neg ~ Kommunen$score_avg, data = Pooled_GermanPolarityClues)) 
+
+#Anzahl der positiven Wörter als abhängige Variable betrachtet und der Management Score als unabhängige Variable
+
+mean(Pooled_GermanPolarityClues$gewichtet_Pooled_german_pos_neg , na.rm = TRUE)
+
+plot(Kommunen$score_avg, gewichtet_Pooled_german_pos_neg, xlab = "Management Score", ylab = "Sentiment", main = "Beziehung zwischen Management Score und Sentiment Share") 
+
+
+```
+
+#Sentiment Versuch mit LIWC Frage: Schreiben die Kommunen mit einem höheren Management Score mehr positive Wörter?  
+```{r}
+
+library("data.table")
+
+LIWC <- fread("/Users/clarasonnleitner/Downloads/LIWC_German/LIWC_German.dic", fill = TRUE)
+str(LIWC)
+
+colnames(LIWC)[1] = "Wort"  #Spaltenumbennenung
+
+
+LIWC$Gefühl <- gsub("\\D", " ", LIWC$Wort)  # Nur Zahlen behalten, andere Zeichen entfernen
+LIWC$Gefühl <- trimws(LIWC$Gefühl)  # Leerzeichen am Anfang und Ende entfernen 
+
+
+# Erstelle eine separate Tabelle mit den ersten 64 Zeilen
+Definition_Dict <- LIWC[1:64, ]
+
+# Entferne die ersten 65 Zeilen aus dem ursprünglichen Dataframe
+LIWC_Dict  <- LIWC[-(1:65), ]
+
+# In Spalte "Wort" die Zahlen extrahieren 
+LIWC_Dict$Wort <- gsub("\\d", "", LIWC_Dict$Wort)
+
+#Verschiedene Dict 
+
+LIWC_Opt <- LIWC_Dict[grepl("\\b15\\b", LIWC_Dict$Gefühl), ] #Dict mit optimistischen Begrifflichkeiten ("Optimism" 15)
+
+
+LIWC_pos <- LIWC_Dict[grepl("\\b13\\b", LIWC_Dict$Gefühl), ] #Dict mit positiven Begriffen ("Positive emotions" 13)
+
+
+LIWC_neg <- LIWC_Dict[grepl("\\b16\\b", LIWC_Dict$Gefühl), ] #Dict mit negativen Begriffen ("Negative emotions", 16 )
+
+#Score (1, -1) hinzufügen 
+
+LIWC_pos <- LIWC_pos %>% 
+mutate(score = 1, word = Wort) %>% 
+select(word, score)
+
+LIWC_neg <- LIWC_neg %>% 
+mutate(score = -1, word = Wort) %>% 
+select(word, score)
+
+#ein Dictionary daraus machen 
+LIWC_pos_neg <- rbind(LIWC_pos, LIWC_neg) 
+
+colnames(LIWC_pos_neg)[2] <- "sentiment"
+
+LIWC_pos_neg_dict <- quanteda::as.dictionary(LIWC_pos_neg) 
+
+
+
+tokens_LIWC <- tokens(LIWC_pos_neg$word)
+pooled <- tokens(Kommunen$pooled) 
+
+# Wandle `versuch` und `pooled` in Vektoren um
+LIWC_vec <- as.character(tokens_LIWC)
+pooled_vec <- as.character(pooled)
+
+# Bestimme die Schnittmenge der Wörter
+Schnittmenge_LIWC_pooled <- intersect(LIWC_vec, pooled_vec)
+
+
+```
+
+## Zusammenhang zwischen diesem Dict (LIWC) und Average Score (pooled) : 
+```{r}
+
+toks_pooled <- tokens_compound(pooled_remove, LIWC_pos_neg_dict, concatenator = " ")
+
+sentiment_pooled_LIWC_pos_neg <- tokens_lookup(toks_pooled, dictionary = LIWC_pos_neg_dict) |>
+  dfm() 
+
+sentiment_pooled_LIWC_pos_neg <- convert(sentiment_pooled_LIWC_pos_neg , to = "data.frame") 
+
+#Alles in einer Tabelle mit Management Score #average Score und Sentiment_Versuch zusammen 
+
+Pooled_LIWC_pos_neg <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_pooled_LIWC_pos_neg$'1', sentiment_pooled_LIWC_pos_neg$'-1', na.rm = TRUE)
+
+names(Pooled_LIWC_pos_neg)[3] <- "positiv"
+names(Pooled_LIWC_pos_neg)[4] <- "negativ"
+
+
+#Regression 
+
+gewichtet_Pooled_LIWC_pos_neg <- Pooled_LIWC_pos_neg$positiv/ (Pooled_LIWC_pos_neg$positiv+ Pooled_LIWC_pos_neg$negativ)
+
+Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg <- gewichtet_Pooled_LIWC_pos_neg
+
+share_positiv_LIWC_pos_neg<- plot(Pooled_LIWC_pos_neg$'Kommunen$score_avg', Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg)
+
+abline(lm(Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg ~ Pooled_LIWC_pos_neg$'Kommunen$score_avg'))
+
+summary(lm(Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg ~ Pooled_LIWC_pos_neg$'Kommunen$score_avg')) 
+
+
+#Anzahl der negativen Wörter als abhängige Variable betrachtet und der Management Score als unabhängige Variable
+
+gewichtet_Pooled_LIWC_pos_neg <- Pooled_LIWC_pos_neg$negativ/ (Pooled_LIWC_pos_neg$positiv+ Pooled_LIWC_pos_neg$negativ)
+
+Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg <- gewichtet_Pooled_LIWC_pos_neg
+
+share_positiv_LIWC_pos_neg<- plot(Pooled_LIWC_pos_neg$'Kommunen$score_avg', Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg) 
+
+abline(lm(Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg ~ Pooled_LIWC_pos_neg$'Kommunen$score_avg'))
+
+summary(lm(gewichtet_Pooled_LIWC_pos_neg ~ Kommunen$score_avg, data = Pooled_LIWC_pos_neg)) 
+
+#GLM Model nochmal versuchen 
+
+
+#logit Modell falls share  x >= 0.5 , x< 0.5 
+
+abline(glm(Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg ~ Pooled_LIWC_pos_neg$'Kommunen$score_avg'))
+
+GLM <-summary(glm(Pooled_LIWC_pos_neg$gewichtet_Pooled_LIWC_pos_neg ~ Pooled_LIWC_pos_neg$'Kommunen$score_avg')) 
+
+plot(Kommunen$score_avg, gewichtet_Pooled_LIWC_pos_neg, xlab = "Management Score", ylab = "Sentiment", main = "Beziehung zwischen Management Score und Sentiment Share") 
+
+```
+
+
+## Zusammenhang zwischen diesem Dict und Average Score (pooled) Frage (Optimismus mehr als mehr als 0) noch machen
+(Logit laut AR nicht nötig)
+```{r}
+LIWC_Opt <- LIWC_Dict[grepl("\\b15\\b", LIWC_Dict$Gefühl), ] #Dict mit optimistischen Begrifflichkeiten ("Optimism" 15)
+
+#Score (1) hinzufügen 
+
+LIWC_Opt <- LIWC_Opt %>% 
+mutate(score = 1, word = Wort) %>% 
+select(word, score)
+
+setnames(LIWC_Opt, "score", "sentiment")
+
+LIWC_opt <- quanteda::as.dictionary(LIWC_Opt) 
+
+toks_pooled <- tokens_compound(pooled_remove, LIWC_Opt, concatenator = " ")
+
+sentiment_pooled_LIWC_opt <- tokens_lookup(toks_pooled, dictionary = LIWC_opt) |>
+  dfm() 
+
+sentiment_LIWC_opt <- convert(sentiment_pooled_LIWC_opt , to = "data.frame") 
+
+#Alles in einer Tabelle mit Management Score #average Score und Sentiment_Versuch zusammen 
+
+Pooled_LIWC_opt <- cbind.data.frame(Kommunen$ags_bert, Kommunen$score_avg, sentiment_LIWC_opt, na.rm = TRUE)
+
+names(Pooled_LIWC_opt)[4] <- "optimistisch"
+
+#Share zwischen optimistischen / (Optimistisch + negative Emotionen)
+
+shared_opt <- Pooled_LIWC_opt$optimistisch / ( Pooled_LIWC_opt$optimistisch + Pooled_LIWC_pos_neg$negativ)
+
+#lm Model 
+
+Pooled_LIWC_opt$shared_opt <- shared_opt
+
+plot(Pooled_LIWC_opt$'Kommunen$score_avg', Pooled_LIWC_opt$shared_opt)
+
+abline(lm(Pooled_LIWC_opt$shared_opt~ Pooled_LIWC_opt$'Kommunen$score_avg'))
+
+summary(lm(Pooled_LIWC_opt$shared_opt ~ Pooled_LIWC_opt$'Kommunen$score_avg'))
+
+#hier nochmal ran, wie viele Leute schreiben überhaupt was ? Es springt auf nicht besonders viele an .. 
+
+sum(Pooled_LIWC_opt$optimistisch==0) 
+
+#Regression 
+plot(Pooled_LIWC_opt$'Kommunen$score_avg', Pooled_LIWC_opt$optimistisch)
+
+abline(lm(Pooled_LIWC_opt$optimistisch ~ Pooled_LIWC_opt$'Kommunen$score_avg'))
+
+summary(lm(Pooled_LIWC_opt$optimistisch~ Pooled_LIWC_opt$'Kommunen$score_avg'))
+
+#Anzahl der optimistischen Wörter als abhängige Variable betrachtet und der Management Score als unabhängige Variable
+```
+
+
+Boxplot: Untere 50% und Obere 50%
+
+```{r}
+
+subset_Kommunen <- Kommunen[complete.cases(Kommunen$score_avg), ]
+
+
+neue_Gesamt_Wörter <- c(Kommunen$Tabelle_Länge_Wörter47 +Kommunen$Tabelle_Länge_Wörter48 +Kommunen$Tabelle_Länge_Wörter49 )
+
+mean(neue_Gesamt_Wörter)
+
+# Untere 50%: Durchschnitt der Länge der Wörter berechnen
+lower_data <- neue_Gesamt_Wörter[subset_Kommunen$score_avg <= quantile(subset_Kommunen$score_avg, 0.5, na.rm = TRUE)]
+lower_avg <- mean(lower_data , na.rm = TRUE)
+
+# Obere 50%: Durchschnitt der Länge der Wörter berechnen
+upper_data <- neue_Gesamt_Wörter[subset_Kommunen$score_avg > quantile(subset_Kommunen$score_avg, 0.5, na.rm = TRUE)]
+upper_avg <- mean(upper_data, na.rm = TRUE)
+
+# Daten für das Balkendiagramm
+avg_lengths <- c(lower_avg, upper_avg)
+group_names <- c("Untere 50%", "Obere 50%")
+
+# Balkendiagramm erstellen
+barplot(avg_lengths, names.arg = group_names, 
+        xlab = "Gruppe", ylab = "Durchschnittslänge der Wörter", 
+        main = "Durchschnittslänge der Wörter in den unteren und oberen 50%",
+        col = c("lightblue", "lightgreen"), ylim = c(0, max(avg_lengths) + 50))
+
+# Beschriftung der Balken
+text(x = 1:2, y = avg_lengths, labels = round(avg_lengths, 2), pos = 3)
+
+# Legende hinzufügen
+legend("topright", legend = group_names, fill = c("lightblue", "lightgreen"))
+
+
+boxplot(list(lower_data, upper_data), 
+        names = group_names,
+        xlab = "Gruppe", ylab = "Länge der Wörter",
+        main = "Boxplot der Länge der Wörter in den unteren und oberen 50%",
+        col = c("lightblue", "lightgreen"))
+
+
+```
